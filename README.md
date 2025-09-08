@@ -62,13 +62,13 @@ This script automates the deployment of Grafana's Kubernetes monitoring solution
 
 ### Method 1: Direct Remote Execution (Recommended)
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-org/your-repo/main/setup-grafana-monitoring.sh | bash
+curl -sSL https://raw.githubusercontent.com/odhomane/grafana-agent/main/setup-grafana-monitoring.sh | bash
 ```
 
 ### Method 2: Download and Execute
 ```bash
 # Download the script
-curl -sSL https://raw.githubusercontent.com/your-org/your-repo/main/setup-grafana-monitoring.sh -o setup-grafana-monitoring.sh
+curl -sSL https://raw.githubusercontent.com/odhomane/grafana-agent/main/setup-grafana-monitoring.sh -o setup-grafana-monitoring.sh
 
 # Make executable
 chmod +x setup-grafana-monitoring.sh
@@ -79,8 +79,8 @@ chmod +x setup-grafana-monitoring.sh
 
 ### Method 3: Clone Repository
 ```bash
-git clone https://github.com/your-org/your-repo.git
-cd your-repo
+git clone https://github.com/odhomane/grafana-agent.git
+cd grafana-agent
 chmod +x setup-grafana-monitoring.sh
 ./setup-grafana-monitoring.sh
 ```
@@ -354,8 +354,8 @@ kubectl delete deployment grafana-k8s-monitoring-kube-state-metrics -n grafana-a
 
 ### Development Setup
 ```bash
-git clone https://github.com/your-org/your-repo.git
-cd your-repo
+git clone https://github.com/odhomane/grafana-agent.git
+cd grafana-agent
 chmod +x setup-grafana-monitoring.sh
 ```
 
@@ -386,12 +386,12 @@ Please include:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/odhomane/grafana-agent/blob/main/LICENSE) file for details.
 
 ## 📞 Support
 
 - **Documentation**: [Grafana K8s Monitoring](https://grafana.com/docs/grafana-cloud/kubernetes-monitoring/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/your-repo/issues)
+- **Issues**: [GitHub Issues](https://github.com/odhomane/grafana-agent/issues)
 - **Community**: [Grafana Community](https://community.grafana.com/)
 
 ---
