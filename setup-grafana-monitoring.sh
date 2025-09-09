@@ -132,7 +132,7 @@ main() {
     prompt_input "Customer ID" CUSTOMER_ID "" "^[a-zA-Z0-9]+$"
     prompt_input "Region" REGION "us-east-1" "^[a-z0-9-]+$"
     prompt_input "Project ID" PROJECT_ID "" "^[a-zA-Z0-9-]+$"
-    prompt_input "Cloud platform" CLOUD_PLATFORM "AWS" "^(AWS|GCP|Azure)$"
+    prompt_input "Cloud platform" CLOUD_PLATFORM "AWS" "^[a-zA-Z0-9_-]+$"
     prompt_input "Stage" STAGE "preprod" "^[a-zA-Z0-9-]+$"
     prompt_input "Environment type" ENV_TYPE "prod" "^[a-zA-Z0-9-]+$"
     prompt_input "Grafana username" USERNAME "" "^[0-9]+$"
