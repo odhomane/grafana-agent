@@ -327,7 +327,12 @@ EOF
     
     # Cleanup option
     echo
-    read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+    if [[ "$OS" == "macOS" ]]; then
+        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+    else
+        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+    fi
+    
     echo
     if [[ $REPLY =~ ^[Nn]$ ]]; then
         print_warning "Values file retained: values-$CLUSTER_NAME.yaml"
@@ -343,6 +348,10 @@ EOF
     print_info "You can check the status with:"
     echo "  kubectl get pods -n grafana-agent"
     echo "  helm status grafana-k8s-monitoring -n grafana-agent"
+    
+    if [[ "$OS" == "macOS" ]]; then
+        print_info "macOS users: You can also use 'brew install watch' and run 'watch kubectl get pods -n grafana-agent'"
+    fi
 }
 
 # Trap to cleanup on exit
