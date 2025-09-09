@@ -333,8 +333,10 @@ EOF
         print_warning "Values file retained: values-$CLUSTER_NAME.yaml"
         print_warning "Remember to delete it manually to protect sensitive information."
     else
-        rm "values-$CLUSTER_NAME.yaml"
-        print_success "Values file deleted for security."
+        if [[ -f "values-$CLUSTER_NAME.yaml" ]]; then
+            rm "values-$CLUSTER_NAME.yaml"
+            print_success "Values file deleted for security."
+        fi
     fi
     
     echo -e "\n${GREEN}Installation completed successfully!${NC}"
