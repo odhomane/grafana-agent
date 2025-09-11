@@ -67,11 +67,31 @@ confirm_action() {
     fi
 }
 
-# Check if running as root (not recommended)
-if [[ $EUID -eq 0 ]]; then
-    print_warning "Running as root is not recommended for this script."
-    confirm_action "Are you sure you want to continue as root?"
-fi
+# Check if running as root and handle appropriately
+check_root_user() {
+    if [[ $EUID -eq 0 ]]; then
+        print_warning "Running as root detected."
+        print_info "While this script can run as root, it's generally safer to run as a regular user with sudo access."
+        print_info "The script will automatically use appropriate permissions for file creation and kubectl operations."
+        
+        # Check if we're in a container or if this is intentional
+        if [[ -f /.dockerenv ]] || [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
+            print_info "Container environment detected - running as root is acceptable."
+        else
+            echo -e "\n${YELLOW}Root execution warnings:${NC}"
+            echo "• Files will be created with root ownership"
+            echo "• kubectl operations will run as root"
+            echo "• Consider running as regular user with kubectl access instead"
+            
+            confirm_action "Do you want to continue running as root?"
+        fi
+        
+        # Set secure file permissions for root
+        umask 077
+    else
+        print_info "Running as user: $(whoami)"
+    fi
+}
 
 # Check required tools
 check_dependencies() {
@@ -87,75 +107,81 @@ check_dependencies() {
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         print_error "Missing required dependencies: ${missing_deps[*]}"
         print_info "Please install them before running this script."
+        
+        # Provide installation hints based on user type
+        if [[ $EUID -eq 0 ]]; then
+            print_info "As root, you can typically install with your package manager:"
+            echo "  • Ubuntu/Debian: apt-get update && apt-get install -y kubectl"
+            echo "  • RHEL/CentOS: yum install -y kubectl"
+            echo "  • Or download directly from Kubernetes releases"
+        else
+            print_info "Install options:"
+            echo "  • Use your package manager (may require sudo)"
+            echo "  • Download binaries to ~/bin or another PATH directory"
+            echo "  • Use installation tools like brew, snap, or direct downloads"
+        fi
         exit 1
     fi
 }
 
-# Check kubectl connection
+# Check kubectl connection with appropriate user context
 check_k8s_connection() {
+    print_info "Testing Kubernetes connection..."
+    
     if ! kubectl cluster-info &> /dev/null; then
         print_error "Cannot connect to Kubernetes cluster."
-        print_info "Please ensure kubectl is configured correctly."
+        
+        if [[ $EUID -eq 0 ]]; then
+            print_info "Running as root - ensure kubectl config is properly set up."
+            print_info "You may need to:"
+            echo "  • Copy kubeconfig to /root/.kube/config"
+            echo "  • Set KUBECONFIG environment variable"
+            echo "  • Ensure cluster certificates are accessible"
+        else
+            print_info "Please ensure kubectl is configured correctly for your user."
+            print_info "Check: kubectl config view"
+        fi
         exit 1
     fi
     
     local context=$(kubectl config current-context)
-    print_info "Connected to Kubernetes context: $context"
-    confirm_action "This will install Grafana monitoring on the current cluster."
+    local user_info=""
+    
+    if [[ $EUID -eq 0 ]]; then
+        user_info=" (as root)"
+    fi
+    
+    print_info "Connected to Kubernetes context: $context$user_info"
+    
+    # Additional security check for root users
+    if [[ $EUID -eq 0 ]]; then
+        print_warning "Running kubectl operations as root on cluster: $context"
+        confirm_action "This will install Grafana monitoring with root privileges on the current cluster."
+    else
+        confirm_action "This will install Grafana monitoring on the current cluster."
+    fi
 }
 
-# Main script
-main() {
-    echo -e "${GREEN}"
-    echo "=========================================="
-    echo "  Grafana K8s Monitoring Setup Script   "
-    echo "=========================================="
-    echo -e "${NC}"
+# Create values file with appropriate permissions
+create_values_file() {
+    local values_file="values-$CLUSTER_NAME.yaml"
     
-    print_info "This script will set up Grafana Kubernetes monitoring."
-    print_info "Please provide the following information:"
-    echo
+    print_info "Creating Helm values file: $values_file"
     
-    # Check dependencies first
-    print_info "Checking dependencies..."
-    check_dependencies
-    print_success "All dependencies found."
+    # Create file with restricted permissions
+    if [[ $EUID -eq 0 ]]; then
+        # Root: create with 600 permissions (owner read/write only)
+        touch "$values_file"
+        chmod 600 "$values_file"
+        print_info "File created with root ownership and 600 permissions."
+    else
+        # Regular user: create with default umask
+        touch "$values_file"
+        chmod 600 "$values_file"
+        print_info "File created with user ownership and restricted permissions."
+    fi
     
-    # Check Kubernetes connection
-    print_info "Checking Kubernetes connection..."
-    check_k8s_connection
-    
-    # Gather inputs
-    echo -e "\n${BLUE}Configuration Parameters:${NC}"
-    
-    prompt_input "Cluster name" CLUSTER_NAME "" "^[a-zA-Z0-9-]+$"
-    prompt_input "Customer ID" CUSTOMER_ID "" "^[a-zA-Z0-9]+$"
-    prompt_input "Region" REGION "us-east-1" "^[a-z0-9-]+$"
-    prompt_input "Project ID" PROJECT_ID "" "^[a-zA-Z0-9-]+$"
-    prompt_input "Cloud platform" CLOUD_PLATFORM "AWS" "^[a-zA-Z0-9_-]+$"
-    prompt_input "Stage" STAGE "preprod" "^[a-zA-Z0-9-]+$"
-    prompt_input "Environment type" ENV_TYPE "prod" "^[a-zA-Z0-9-]+$"
-    prompt_input "Grafana username" USERNAME "" "^[0-9]+$"
-    prompt_input "Grafana password/token" PASSWORD "" ".*" true
-    
-    # Display configuration summary
-    echo -e "\n${BLUE}Configuration Summary:${NC}"
-    echo "Cluster Name: $CLUSTER_NAME"
-    echo "Customer ID: $CUSTOMER_ID"
-    echo "Region: $REGION"
-    echo "Project ID: $PROJECT_ID"
-    echo "Cloud Platform: $CLOUD_PLATFORM"
-    echo "Stage: $STAGE"
-    echo "Environment Type: $ENV_TYPE"
-    echo "Username: $USERNAME"
-    echo "Password: [HIDDEN]"
-    
-    confirm_action "Proceed with the installation using these settings?"
-    
-    # Create values file
-    print_info "Creating Helm values file..."
-    
-    cat <<EOF > "values-$CLUSTER_NAME.yaml"
+    cat <<EOF > "$values_file"
 cluster:
   name: $CLUSTER_NAME
 destinations:
@@ -292,7 +318,85 @@ integrations:
               - alloy_build_info
 EOF
 
-    print_success "Values file created: values-$CLUSTER_NAME.yaml"
+    print_success "Values file created successfully."
+}
+
+# Cleanup function with user-aware permissions
+cleanup_values_file() {
+    local values_file="values-$CLUSTER_NAME.yaml"
+    
+    if [[ -f "$values_file" ]]; then
+        # Securely delete the file
+        if command -v shred &> /dev/null; then
+            print_info "Securely deleting values file with shred..."
+            shred -vfz -n 3 "$values_file"
+        else
+            print_info "Deleting values file..."
+            rm -f "$values_file"
+        fi
+        print_success "Values file deleted for security."
+    fi
+}
+
+# Main script
+main() {
+    echo -e "${GREEN}"
+    echo "=========================================="
+    echo "  Grafana K8s Monitoring Setup Script   "
+    echo "=========================================="
+    echo -e "${NC}"
+    
+    print_info "This script will set up Grafana Kubernetes monitoring."
+    print_info "Please provide the following information:"
+    echo
+    
+    # Check user permissions and handle root appropriately
+    check_root_user
+    
+    # Check dependencies first
+    print_info "Checking dependencies..."
+    check_dependencies
+    print_success "All dependencies found."
+    
+    # Check Kubernetes connection
+    print_info "Checking Kubernetes connection..."
+    check_k8s_connection
+    
+    # Gather inputs
+    echo -e "\n${BLUE}Configuration Parameters:${NC}"
+    
+    prompt_input "Cluster name" CLUSTER_NAME "" "^[a-zA-Z0-9-]+$"
+    prompt_input "Customer ID" CUSTOMER_ID "" "^[a-zA-Z0-9]+$"
+    prompt_input "Region" REGION "us-east-1" "^[a-z0-9-]+$"
+    prompt_input "Project ID" PROJECT_ID "" "^[a-zA-Z0-9-]+$"
+    prompt_input "Cloud platform" CLOUD_PLATFORM "AWS" "^[a-zA-Z0-9_-]+$"
+    prompt_input "Stage" STAGE "preprod" "^[a-zA-Z0-9-]+$"
+    prompt_input "Environment type" ENV_TYPE "prod" "^[a-zA-Z0-9-]+$"
+    prompt_input "Grafana username" USERNAME "" "^[0-9]+$"
+    prompt_input "Grafana password/token" PASSWORD "" ".*" true
+    
+    # Display configuration summary
+    echo -e "\n${BLUE}Configuration Summary:${NC}"
+    echo "Cluster Name: $CLUSTER_NAME"
+    echo "Customer ID: $CUSTOMER_ID"
+    echo "Region: $REGION"
+    echo "Project ID: $PROJECT_ID"
+    echo "Cloud Platform: $CLOUD_PLATFORM"
+    echo "Stage: $STAGE"
+    echo "Environment Type: $ENV_TYPE"
+    echo "Username: $USERNAME"
+    echo "Password: [HIDDEN]"
+    
+    if [[ $EUID -eq 0 ]]; then
+        echo "Running as: root"
+    else
+        echo "Running as: $(whoami)"
+    fi
+    
+    confirm_action "Proceed with the installation using these settings?"
+    
+    # Create values file
+    create_values_file
     
     # Add Helm repo and install
     print_info "Adding Grafana Helm repository..."
@@ -327,21 +431,17 @@ EOF
     
     # Cleanup option
     echo
-    if [[ "$OS" == "macOS" ]]; then
-        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
-    else
-        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
-    fi
-    
+    read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
     echo
+    
     if [[ $REPLY =~ ^[Nn]$ ]]; then
         print_warning "Values file retained: values-$CLUSTER_NAME.yaml"
+        if [[ $EUID -eq 0 ]]; then
+            print_warning "File is owned by root with 600 permissions."
+        fi
         print_warning "Remember to delete it manually to protect sensitive information."
     else
-        if [[ -f "values-$CLUSTER_NAME.yaml" ]]; then
-            rm "values-$CLUSTER_NAME.yaml"
-            print_success "Values file deleted for security."
-        fi
+        cleanup_values_file
     fi
     
     echo -e "\n${GREEN}Installation completed successfully!${NC}"
@@ -349,16 +449,21 @@ EOF
     echo "  kubectl get pods -n grafana-agent"
     echo "  helm status grafana-k8s-monitoring -n grafana-agent"
     
-    if [[ "$OS" == "macOS" ]]; then
-        print_info "macOS users: You can also use 'brew install watch' and run 'watch kubectl get pods -n grafana-agent'"
+    # Provide user-specific post-installation info
+    if [[ $EUID -eq 0 ]]; then
+        print_info "Root user notes:"
+        echo "  • All kubectl operations were performed as root"
+        echo "  • Consider setting up proper RBAC for regular users"
+        echo "  • Files created in: $(pwd)"
     fi
 }
 
-# Trap to cleanup on exit
+# Enhanced cleanup function
 cleanup() {
-    if [[ -f "values-$CLUSTER_NAME.yaml" ]]; then
-        print_warning "Cleaning up values file..."
-        rm -f "values-$CLUSTER_NAME.yaml"
+    local values_file="values-${CLUSTER_NAME:-temp}.yaml"
+    if [[ -f "$values_file" ]]; then
+        print_warning "Cleaning up values file on exit..."
+        cleanup_values_file
     fi
 }
 trap cleanup EXIT
