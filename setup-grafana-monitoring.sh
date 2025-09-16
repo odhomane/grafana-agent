@@ -18,6 +18,17 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Function to get terminal input (fixes stdin issue with curl | bash)
+get_tty_input() {
+    if [[ -t 0 ]]; then
+        # stdin is a terminal
+        cat
+    else
+        # stdin is not a terminal (piped from curl), use /dev/tty
+        cat < /dev/tty
+    fi
+}
+
 # Function to prompt for input with validation
 prompt_input() {
     local prompt="$1"
@@ -34,10 +45,18 @@ prompt_input() {
         fi
         
         if [[ "$is_sensitive" == "true" ]]; then
-            read -s input
+            if [[ -t 0 ]]; then
+                read -s input
+            else
+                read -s input < /dev/tty
+            fi
             echo  # Add newline after hidden input
         else
-            read input
+            if [[ -t 0 ]]; then
+                read input
+            else
+                read input < /dev/tty
+            fi
         fi
         
         # Use default if empty input
@@ -59,8 +78,14 @@ prompt_input() {
 confirm_action() {
     local message="$1"
     echo -e "\n${YELLOW}$message${NC}"
-    read -p "Do you want to continue? (y/N): " -n 1 -r
+    
+    if [[ -t 0 ]]; then
+        read -p "Do you want to continue? (y/N): " -n 1 -r
+    else
+        read -p "Do you want to continue? (y/N): " -n 1 -r < /dev/tty
+    fi
     echo
+    
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         print_info "Operation cancelled."
         exit 0
@@ -124,7 +149,28 @@ check_dependencies() {
     fi
 }
 
-# Check kubectl connection with appropriate user context
+# Function to detect cloud platform and adjust configuration
+detect_and_configure_cloud() {
+    local detected_platform=""
+    
+    # Try to detect cloud platform automatically
+    if kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null | grep -q "azure://"; then
+        detected_platform="Azure"
+    elif kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null | grep -q "aws://"; then
+        detected_platform="AWS"
+    elif kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null | grep -q "gce://"; then
+        detected_platform="GCP"
+    fi
+    
+    if [[ -n "$detected_platform" ]]; then
+        print_info "Detected cloud platform: $detected_platform"
+        if [[ "$CLOUD_PLATFORM" != "$detected_platform" ]]; then
+            print_warning "You specified '$CLOUD_PLATFORM' but detected '$detected_platform'"
+            print_info "Using detected platform for optimal configuration."
+            CLOUD_PLATFORM="$detected_platform"
+        fi
+    fi
+}
 check_k8s_connection() {
     print_info "Testing Kubernetes connection..."
     
@@ -350,19 +396,7 @@ main() {
     print_info "Please provide the following information:"
     echo
     
-    # Check user permissions and handle root appropriately
-    check_root_user
-    
-    # Check dependencies first
-    print_info "Checking dependencies..."
-    check_dependencies
-    print_success "All dependencies found."
-    
-    # Check Kubernetes connection
-    print_info "Checking Kubernetes connection..."
-    check_k8s_connection
-    
-    # Gather inputs
+    # Gather inputs directly without checks
     echo -e "\n${BLUE}Configuration Parameters:${NC}"
     
     prompt_input "Cluster name" CLUSTER_NAME "" "^[a-zA-Z0-9-]+$"
@@ -393,10 +427,18 @@ main() {
         echo "Running as: $(whoami)"
     fi
     
-    confirm_action "Proceed with the installation using these settings?"
-    
     # Create values file
     create_values_file
+    
+    # Perform checks after getting all inputs
+    print_info "Checking dependencies..."
+    check_dependencies
+    print_success "All dependencies found."
+    
+    print_info "Checking Kubernetes connection..."
+    check_k8s_connection
+    
+    confirm_action "Proceed with the installation using these settings?"
     
     # Add Helm repo and install
     print_info "Adding Grafana Helm repository..."
@@ -431,7 +473,11 @@ main() {
     
     # Cleanup option
     echo
-    read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+    if [[ -t 0 ]]; then
+        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+    else
+        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r < /dev/tty
+    fi
     echo
     
     if [[ $REPLY =~ ^[Nn]$ ]]; then
