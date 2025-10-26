@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: grafana-monitoring-setup-
+spec:
+  workflowTemplateRef:
+    name: grafana-monitoring-setup
+  arguments:
+    parameters:
+      - name: cluster-name
+        value: example-cluster
+      - name: customer-id
+        value: examplecustomer
+      - name: region
+        value: us-east-1
+      - name: project-id
+        value: sample-project
+      - name: cloud-platform
+        value: AWS
+      - name: stage
+        value: preprod
+      - name: env-type
+        value: prod
+      - name: username
+        value: "123456"
+      - name: grafana-password
+        value: ""

@@ -5,6 +5,90 @@
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
+usage() {
+    cat <<'EOF'
+Usage: setup-grafana-monitoring.sh [options]
+
+Options:
+  --help                Show this help message and exit
+  --non-interactive     Require all configuration to be supplied via environment
+                        variables or CLI flags. Prompts are disabled in this mode.
+  --cluster-name VALUE  Grafana Agent cluster name (CLUSTER_NAME)
+  --customer-id VALUE   Customer identifier (CUSTOMER_ID)
+  --region VALUE        Deployment region (REGION)
+  --project-id VALUE    Project identifier (PROJECT_ID)
+  --cloud-platform VAL  Cloud platform name (CLOUD_PLATFORM)
+  --stage VALUE         Stage identifier (STAGE)
+  --env-type VALUE      Environment type (ENV_TYPE)
+  --username VALUE      Grafana username (USERNAME)
+  --password VALUE      Grafana password or token (PASSWORD)
+
+All flags map to environment variables of the same name. Flags override
+environment variables. In non-interactive mode every value must be provided.
+EOF
+}
+
+NON_INTERACTIVE=${NON_INTERACTIVE:-false}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help)
+            usage
+            exit 0
+            ;;
+        --non-interactive)
+            NON_INTERACTIVE=true
+            shift
+            ;;
+        --cluster-name)
+            export CLUSTER_NAME="$2"
+            shift 2
+            ;;
+        --customer-id)
+            export CUSTOMER_ID="$2"
+            shift 2
+            ;;
+        --region)
+            export REGION="$2"
+            shift 2
+            ;;
+        --project-id)
+            export PROJECT_ID="$2"
+            shift 2
+            ;;
+        --cloud-platform)
+            export CLOUD_PLATFORM="$2"
+            shift 2
+            ;;
+        --stage)
+            export STAGE="$2"
+            shift 2
+            ;;
+        --env-type)
+            export ENV_TYPE="$2"
+            shift 2
+            ;;
+        --username)
+            export USERNAME="$2"
+            shift 2
+            ;;
+        --password)
+            export PASSWORD="$2"
+            shift 2
+            ;;
+        --*)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            echo "Unexpected argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,7 +127,7 @@ prompt_input() {
         else
             echo -n "$prompt: "
         fi
-        
+
         if [[ "$is_sensitive" == "true" ]]; then
             if [[ -t 0 ]]; then
                 read -s input
@@ -74,9 +158,46 @@ prompt_input() {
     done
 }
 
+# Function to obtain configuration values from environment/CLI or prompt
+get_config_value() {
+    local var_name="$1"
+    local prompt="$2"
+    local default_value="${3:-}"
+    local validation_regex="${4:-.*}"
+    local is_sensitive="${5:-false}"
+
+    local env_value="${!var_name:-}"
+
+    if [[ -n "$env_value" ]]; then
+        if [[ "$env_value" =~ $validation_regex ]]; then
+            eval "$var_name='$env_value'"
+            if [[ "$is_sensitive" != "true" ]]; then
+                print_info "Using $var_name from environment/CLI"
+            else
+                print_info "Using $var_name from environment/CLI (hidden)"
+            fi
+            return
+        fi
+
+        print_error "Value provided for $var_name does not match expected format: $validation_regex"
+        exit 1
+    fi
+
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_error "$var_name is required in non-interactive mode. Provide it via environment variable or CLI flag."
+        exit 1
+    fi
+
+    prompt_input "$prompt" "$var_name" "$default_value" "$validation_regex" "$is_sensitive"
+}
+
 # Function to confirm action
 confirm_action() {
     local message="$1"
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_info "Non-interactive mode: automatically confirming '$message'."
+        return
+    fi
     echo -e "\n${YELLOW}$message${NC}"
     
     if [[ -t 0 ]]; then
@@ -399,15 +520,15 @@ main() {
     # Gather inputs directly without checks
     echo -e "\n${BLUE}Configuration Parameters:${NC}"
     
-    prompt_input "Cluster name" CLUSTER_NAME "" "^[a-zA-Z0-9-]+$"
-    prompt_input "Customer ID" CUSTOMER_ID "" "^[a-zA-Z0-9]+$"
-    prompt_input "Region" REGION "us-east-1" "^[a-z0-9-]+$"
-    prompt_input "Project ID" PROJECT_ID "" "^[a-zA-Z0-9-]+$"
-    prompt_input "Cloud platform" CLOUD_PLATFORM "AWS" "^[a-zA-Z0-9_-]+$"
-    prompt_input "Stage" STAGE "preprod" "^[a-zA-Z0-9-]+$"
-    prompt_input "Environment type" ENV_TYPE "prod" "^[a-zA-Z0-9-]+$"
-    prompt_input "Grafana username" USERNAME "" "^[0-9]+$"
-    prompt_input "Grafana password/token" PASSWORD "" ".*" true
+    get_config_value CLUSTER_NAME "Cluster name" "" "^[a-zA-Z0-9-]+$"
+    get_config_value CUSTOMER_ID "Customer ID" "" "^[a-zA-Z0-9]+$"
+    get_config_value REGION "Region" "us-east-1" "^[a-z0-9-]+$"
+    get_config_value PROJECT_ID "Project ID" "" "^[a-zA-Z0-9-]+$"
+    get_config_value CLOUD_PLATFORM "Cloud platform" "AWS" "^[a-zA-Z0-9_-]+$"
+    get_config_value STAGE "Stage" "preprod" "^[a-zA-Z0-9-]+$"
+    get_config_value ENV_TYPE "Environment type" "prod" "^[a-zA-Z0-9-]+$"
+    get_config_value USERNAME "Grafana username" "" "^[0-9]+$"
+    get_config_value PASSWORD "Grafana password/token" "" ".*" true
     
     # Display configuration summary
     echo -e "\n${BLUE}Configuration Summary:${NC}"
@@ -473,21 +594,26 @@ main() {
     
     # Cleanup option
     echo
-    if [[ -t 0 ]]; then
-        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
-    else
-        read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r < /dev/tty
-    fi
-    echo
-    
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        print_warning "Values file retained: values-$CLUSTER_NAME.yaml"
-        if [[ $EUID -eq 0 ]]; then
-            print_warning "File is owned by root with 600 permissions."
-        fi
-        print_warning "Remember to delete it manually to protect sensitive information."
-    else
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        print_info "Non-interactive mode: deleting generated values file."
         cleanup_values_file
+    else
+        if [[ -t 0 ]]; then
+            read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r
+        else
+            read -p "Do you want to delete the values file with sensitive information? (Y/n): " -n 1 -r < /dev/tty
+        fi
+        echo
+
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            print_warning "Values file retained: values-$CLUSTER_NAME.yaml"
+            if [[ $EUID -eq 0 ]]; then
+                print_warning "File is owned by root with 600 permissions."
+            fi
+            print_warning "Remember to delete it manually to protect sensitive information."
+        else
+            cleanup_values_file
+        fi
     fi
     
     echo -e "\n${GREEN}Installation completed successfully!${NC}"
