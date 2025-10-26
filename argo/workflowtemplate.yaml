@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: grafana-monitoring-setup
+  labels:
+    app.kubernetes.io/name: grafana-monitoring-setup
+spec:
+  entrypoint: run-setup
+  serviceAccountName: argo-workflow
+  templates:
+    - name: run-setup
+      inputs:
+        parameters:
+          - name: cluster-name
+            description: Friendly name for the Kubernetes cluster
+          - name: customer-id
+            description: Customer identifier used for labeling
+          - name: region
+            description: Deployment region for the Grafana Agent
+            default: us-east-1
+          - name: project-id
+            description: Project identifier used for labeling
+          - name: cloud-platform
+            description: Cloud provider hosting the cluster
+            default: AWS
+          - name: stage
+            description: Deployment stage (e.g. preprod, prod)
+            default: preprod
+          - name: env-type
+            description: Environment type (e.g. prod, staging)
+            default: prod
+          - name: username
+            description: Grafana username to authenticate against the API
+          - name: grafana-password
+            description: Grafana password/token passed directly as a parameter. Leave empty to read from the mounted secret.
+            default: ""
+      container:
+        image: lachlanevenson/k8s-helm:v3.12.2
+        imagePullPolicy: IfNotPresent
+        command:
+          - bash
+          - -ceu
+          - |
+            mkdir -p /workspace
+            cp /scripts/setup-grafana-monitoring.sh /workspace/setup-grafana-monitoring.sh
+            chmod 700 /workspace/setup-grafana-monitoring.sh
+            export CLUSTER_NAME="{{inputs.parameters.cluster-name}}"
+            export CUSTOMER_ID="{{inputs.parameters.customer-id}}"
+            export REGION="{{inputs.parameters.region}}"
+            export PROJECT_ID="{{inputs.parameters.project-id}}"
+            export CLOUD_PLATFORM="{{inputs.parameters.cloud-platform}}"
+            export STAGE="{{inputs.parameters.stage}}"
+            export ENV_TYPE="{{inputs.parameters.env-type}}"
+            export USERNAME="{{inputs.parameters.username}}"
+            if [[ -n "${PASSWORD:-}" ]]; then
+              export PASSWORD
+            else
+              export PASSWORD="{{inputs.parameters.grafana-password}}"
+            fi
+            if [[ -z "$PASSWORD" ]]; then
+              echo "Grafana password must be supplied via secret or parameter" >&2
+              exit 1
+            fi
+            export NON_INTERACTIVE=true
+            /workspace/setup-grafana-monitoring.sh --non-interactive
+        env:
+          - name: PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: grafana-monitoring-credentials
+                key: password
+                optional: true
+        volumeMounts:
+          - name: setup-script
+            mountPath: /scripts
+            readOnly: true
+        workingDir: /workspace
+      volumes:
+        - name: setup-script
+          configMap:
+            name: grafana-monitoring-setup-script
